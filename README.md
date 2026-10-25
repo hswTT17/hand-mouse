@@ -27,4 +27,4 @@
 
 ## 개발자용
 - Windows에서 직접 빌드: `build_windows.bat` 더블클릭 (Python·패키지 설치부터 exe·zip 생성까지 자동)
-- 새 버전 배포: `git tag v1.0.1 && git push origin v1.0.1` → GitHub Actions가 Windows·Mac 파일을 만들어 Releases에 올립니다.
+- 새 버전 배포: GitHub에서 새 Release를 발행(Publish)하면 GitHub Actions가 Windows·Mac 설치 파일을 만들어 그 Release에 자동으로 첨부합니다.
