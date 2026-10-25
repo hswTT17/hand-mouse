@@ -42,3 +42,4 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         with:
           files: HandMouse-*.zip
+          overwrite_files: false
