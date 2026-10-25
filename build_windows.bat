@@ -23,8 +23,10 @@ if not exist .venv "%PYEXE%" -m venv .venv >> "%LOG%" 2>&1
   goto end
 )
 echo Building exe...
-.venv\Scripts\pyinstaller --noconfirm --clean --windowed --name HandMouse --collect-data mediapipe hand_mouse.py >> "%LOG%" 2>&1
-if not exist dist\HandMouse\HandMouse.exe (
+taskkill /f /im HandMouse.exe >nul 2>&1
+if exist dist\HandMouse rmdir /s /q dist\HandMouse >nul 2>&1
+timeout /t 2 /nobreak >nul
+.venv\Scripts\pyinstaller --noconfirm --clean --windowed --name HandMouse --collect-data mediapipe hand_mouse.py >> "%LOG%" 2>&1 || (
   echo BUILD_FAILED >> "%LOG%"
   goto end
 )
