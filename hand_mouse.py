@@ -12,13 +12,17 @@ import mediapipe as mp
 import pyautogui
 
 MARGIN = 0.27     # 카메라 가운데 영역만 사용(클수록 감도↑: 손을 조금만 움직여도 화면 끝까지)
+NEAR_SIZE = 0.20  # 이 크기(가까운 손)일 때 기본 감도
+MAX_BOOST = 2.2   # 손이 멀어질 때 감도를 최대 몇 배까지 올릴지
 STEADY = 0.3      # 떨림 억제(작을수록 안정적, 대신 반응이 느려짐)
 SPEED = 0.003     # 빠르게 움직일 때 따라오는 정도(클수록 빠른 동작에 덜 늦음)
 DEADZONE = 6      # 이 픽셀보다 작은 움직임은 무시
 GLIDE = 0.18      # 커서가 목표로 미끄러지듯 따라가는 정도(작을수록 더 부드럽고 느긋함)
 GLIDE_HZ = 120    # 커서 갱신 횟수(초당)
 PINCH_ON, PINCH_OFF = 0.33, 0.45
-SCROLL_GAIN = 4000 if sys.platform.startswith("win") else 100
+SCROLL_NOTCH = 120 if sys.platform.startswith("win") else 1  # 휠 한 칸
+SCROLL_STEP = 0.035  # 손가락을 이만큼(화면 높이 대비) 움직일 때마다 한 칸 스크롤
+SCROLL_WAIT = 0.3    # 두 손가락을 편 직후 이 시간(초) 동안은 스크롤하지 않음
 CAM_INDEX = 0
 
 pyautogui.FAILSAFE = True
@@ -32,6 +36,12 @@ def dist(a, b):
 
 def clamp(v, lo, hi):
     return max(lo, min(hi, v))
+
+
+def active_gain(size):
+    """손이 멀어질수록(작게 보일수록) 감도를 점점 올리고, 가까워지면 기본 감도로 복구"""
+    boost = clamp(NEAR_SIZE / max(size, 1e-6), 1.0, MAX_BOOST)
+    return boost / (1 - 2 * MARGIN)
 
 
 class OneEuro:
@@ -99,6 +109,7 @@ def main():
     glide.start()
     cx, cy = glide.x, glide.y
     dragging, last_right, scroll_prev = False, 0.0, None
+    scroll_start, size = 0.0, NEAR_SIZE
     try:
         while True:
             ok, frame = cap.read()
@@ -114,25 +125,32 @@ def main():
                 up = [lm[t].y < lm[t - 2].y for t in (8, 12, 16, 20)]
                 pinch = dist(lm[4], lm[8]) / scale
                 rpinch = dist(lm[4], lm[12]) / scale
+                size += (scale - size) * 0.05  # 손 크기(=거리)를 천천히 반영해 감도가 점점 바뀌게
                 status = "MOVE"
                 if not dragging and not any(up):
                     status = "PAUSE"
                 elif not dragging and up == [True, True, False, False] and pinch > PINCH_OFF:
                     status = "SCROLL"
                     y = (lm[8].y + lm[12].y) / 2
-                    amt = 0 if scroll_prev is None else int((scroll_prev - y) * SCROLL_GAIN)
-                    if amt:
-                        pyautogui.scroll(amt)
-                    scroll_prev = y
+                    if scroll_prev is None:  # 막 두 손가락을 폈을 때: 기준점만 잡고 대기
+                        scroll_start, scroll_prev, sy = time.time(), y, y
+                    sy += (y - sy) * 0.4  # 손가락 떨림 완화
+                    if time.time() - scroll_start < SCROLL_WAIT:
+                        scroll_prev = sy
+                    elif abs(scroll_prev - sy) >= SCROLL_STEP:  # 일정 거리 이상 움직였을 때만 한 칸씩
+                        steps = int((scroll_prev - sy) / SCROLL_STEP)
+                        pyautogui.scroll(steps * SCROLL_NOTCH)
+                        scroll_prev -= steps * SCROLL_STEP
                 if status != "SCROLL":
                     scroll_prev = None
                 if status == "MOVE":
                     px = sum(lm[i].x for i in (0, 5, 9, 17)) / 4  # 손바닥 중심: 손가락 움직임에 덜 흔들림
                     py = sum(lm[i].y for i in (0, 5, 9, 17)) / 4
                     now = time.time()
-                    tx = fx(clamp((px - MARGIN) / (1 - 2 * MARGIN), 0, 1) * (SW - 1), now)
-                    ty = fy(clamp((py - MARGIN) / (1 - 2 * MARGIN), 0, 1) * (SH - 1), now)
-                    if math.hypot(tx - cx, ty - cy) > DEADZONE:
+                    gain = active_gain(size)
+                    tx = fx(clamp(0.5 + (px - 0.5) * gain, 0, 1) * (SW - 1), now)
+                    ty = fy(clamp(0.5 + (py - 0.5) * gain, 0, 1) * (SH - 1), now)
+                    if math.hypot(tx - cx, ty - cy) > DEADZONE * gain * (1 - 2 * MARGIN):  # 멀리 있을 땐 떨림 허용폭도 같이 키움
                         cx, cy = tx, ty
                         glide.target(cx, cy)
                     if not dragging and pinch < PINCH_ON:
@@ -153,8 +171,9 @@ def main():
                     dragging = False
                 scroll_prev = None
             h, w = frame.shape[:2]
-            cv2.rectangle(frame, (int(w * MARGIN), int(h * MARGIN)),
-                          (int(w * (1 - MARGIN)), int(h * (1 - MARGIN))), (0, 200, 255), 2)
+            half = 0.5 / active_gain(size)  # 노란 네모 = 화면 전체에 대응하는 손 이동 범위
+            cv2.rectangle(frame, (int(w * (0.5 - half)), int(h * (0.5 - half))),
+                          (int(w * (0.5 + half)), int(h * (0.5 + half))), (0, 200, 255), 2)
             cv2.putText(frame, status, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
             cv2.imshow("Hand Mouse (q: quit)", frame)
             if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
