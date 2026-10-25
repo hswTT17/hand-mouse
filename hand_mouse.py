@@ -10,10 +10,10 @@ import cv2
 import mediapipe as mp
 import pyautogui
 
-MARGIN = 0.15     # 카메라 가장자리 무시 비율
-STEADY = 0.6      # 떨림 억제(작을수록 안정적, 대신 반응이 느려짐)
-SPEED = 0.004     # 빠르게 움직일 때 따라오는 정도(클수록 빠른 동작에 덜 늦음)
-DEADZONE = 4      # 이 픽셀보다 작은 움직임은 무시
+MARGIN = 0.27     # 카메라 가운데 영역만 사용(클수록 감도↑: 손을 조금만 움직여도 화면 끝까지)
+STEADY = 0.3      # 떨림 억제(작을수록 안정적, 대신 반응이 느려짐)
+SPEED = 0.003     # 빠르게 움직일 때 따라오는 정도(클수록 빠른 동작에 덜 늦음)
+DEADZONE = 6      # 이 픽셀보다 작은 움직임은 무시
 PINCH_ON, PINCH_OFF = 0.33, 0.45
 SCROLL_GAIN = 4000 if sys.platform.startswith("win") else 100
 CAM_INDEX = 0
@@ -63,7 +63,7 @@ def main():
     if not cap.isOpened():
         pyautogui.alert("웹캠을 열 수 없습니다. 카메라 권한을 확인해 주세요.", "Hand Mouse")
         return
-    fx, fy = OneEuro(STEADY, SPEED), OneEuro(STEADY, SPEED)
+    fx, fy = OneEuro(STEADY, SPEED, 0.5), OneEuro(STEADY, SPEED, 0.5)
     cx, cy = pyautogui.position()
     dragging, last_right, scroll_prev = False, 0.0, None
     try:
@@ -119,10 +119,15 @@ def main():
                     pyautogui.mouseUp()
                     dragging = False
                 scroll_prev = None
+            h, w = frame.shape[:2]
+            cv2.rectangle(frame, (int(w * MARGIN), int(h * MARGIN)),
+                          (int(w * (1 - MARGIN)), int(h * (1 - MARGIN))), (0, 200, 255), 2)
             cv2.putText(frame, status, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
             cv2.imshow("Hand Mouse (q: quit)", frame)
             if cv2.waitKey(1) & 0xFF in (ord("q"), 27):
                 break
+            if cv2.getWindowProperty("Hand Mouse (q: quit)", cv2.WND_PROP_VISIBLE) < 1:
+                break  # 창의 X 버튼으로 닫아도 종료
     except pyautogui.FailSafeException:
         pass
     finally:
