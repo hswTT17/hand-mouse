@@ -1,0 +1,7 @@
+.venv/
+build/
+dist/
+*.zip
+build_log.txt
+__pycache__/
+*.spec.bak
