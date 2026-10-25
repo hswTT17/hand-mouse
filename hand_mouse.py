@@ -4,6 +4,7 @@
 """
 import math
 import sys
+import threading
 import time
 
 import cv2
@@ -14,6 +15,8 @@ MARGIN = 0.27     # 카메라 가운데 영역만 사용(클수록 감도↑: �
 STEADY = 0.3      # 떨림 억제(작을수록 안정적, 대신 반응이 느려짐)
 SPEED = 0.003     # 빠르게 움직일 때 따라오는 정도(클수록 빠른 동작에 덜 늦음)
 DEADZONE = 6      # 이 픽셀보다 작은 움직임은 무시
+GLIDE = 0.18      # 커서가 목표로 미끄러지듯 따라가는 정도(작을수록 더 부드럽고 느긋함)
+GLIDE_HZ = 120    # 커서 갱신 횟수(초당)
 PINCH_ON, PINCH_OFF = 0.33, 0.45
 SCROLL_GAIN = 4000 if sys.platform.startswith("win") else 100
 CAM_INDEX = 0
@@ -56,6 +59,34 @@ class OneEuro:
         return self.x
 
 
+class Glide(threading.Thread):
+    """카메라(초당 30번)보다 훨씬 자주(초당 120번) 커서를 조금씩 움직여 끊김 없이 부드럽게 이동"""
+
+    def __init__(self):
+        super().__init__(daemon=True)
+        self.x, self.y = pyautogui.position()
+        self.tx, self.ty = self.x, self.y
+        self.stop = threading.Event()
+        self.failsafe = False
+
+    def target(self, x, y):
+        self.tx, self.ty = clamp(x, 2, SW - 3), clamp(y, 2, SH - 3)
+
+    def run(self):
+        last = None
+        while not self.stop.wait(1 / GLIDE_HZ):
+            self.x += (self.tx - self.x) * GLIDE
+            self.y += (self.ty - self.y) * GLIDE
+            pos = (round(self.x), round(self.y))
+            if pos != last:
+                try:
+                    pyautogui.moveTo(*pos)
+                except pyautogui.FailSafeException:
+                    self.failsafe = True
+                    return
+                last = pos
+
+
 def main():
     hands = mp.solutions.hands.Hands(max_num_hands=1, model_complexity=1,
                                      min_detection_confidence=0.7, min_tracking_confidence=0.6)
@@ -64,7 +95,9 @@ def main():
         pyautogui.alert("웹캠을 열 수 없습니다. 카메라 권한을 확인해 주세요.", "Hand Mouse")
         return
     fx, fy = OneEuro(STEADY, SPEED, 0.5), OneEuro(STEADY, SPEED, 0.5)
-    cx, cy = pyautogui.position()
+    glide = Glide()
+    glide.start()
+    cx, cy = glide.x, glide.y
     dragging, last_right, scroll_prev = False, 0.0, None
     try:
         while True:
@@ -101,7 +134,7 @@ def main():
                     ty = fy(clamp((py - MARGIN) / (1 - 2 * MARGIN), 0, 1) * (SH - 1), now)
                     if math.hypot(tx - cx, ty - cy) > DEADZONE:
                         cx, cy = tx, ty
-                        pyautogui.moveTo(clamp(cx, 2, SW - 3), clamp(cy, 2, SH - 3))
+                        glide.target(cx, cy)
                     if not dragging and pinch < PINCH_ON:
                         pyautogui.mouseDown()
                         dragging = True
@@ -128,9 +161,12 @@ def main():
                 break
             if cv2.getWindowProperty("Hand Mouse (q: quit)", cv2.WND_PROP_VISIBLE) < 1:
                 break  # 창의 X 버튼으로 닫아도 종료
+            if glide.failsafe:
+                break
     except pyautogui.FailSafeException:
         pass
     finally:
+        glide.stop.set()
         if dragging:
             pyautogui.mouseUp()
         cap.release()
